@@ -1,0 +1,104 @@
+name: Automate Backup from Source and Deploy to Target (Schema First, Then Data)
+
+on:
+  workflow_dispatch:  # Allows manual triggering of the workflow
+
+jobs:
+  backup-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      name: Checkout Repository
+      with:
+        fetch-depth: 0  # Ensure full history is fetched so the backup files are committed properly
+
+    - name: Install PostgreSQL 16 Client Tools
+      run: |
+        # Remove old PostgreSQL client if it's present
+        sudo apt-get remove -y postgresql-client
+        
+        # Install PostgreSQL 16 client tools
+        echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client-16
+
+    # Step 1: Backup Schema from the Source Database
+    - name: Backup Schema from Source Database
+      env:
+        PGHOST: ${{ secrets.DB_HOSTNAME }}
+        PGPORT: ${{ secrets.DB_PORT }}
+        PGUSER: ${{ secrets.DB_USER }}
+        PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        # Get the timestamp or version number for unique backup filenames
+        TIMESTAMP=$(date +'%Y%m%d%H%M%S')
+        # Backup source schema only with versioning in custom format
+        pg_dump --host=$PGHOST --port=$PGPORT --dbname=Db_Deployment_Automation --username=$PGUSER --no-password --schema-only --format=custom --file=schema_backup_v${TIMESTAMP}.dump
+        echo "Schema backup completed successfully"
+
+    # Step 2: Backup Data from the Source Database
+    - name: Backup Data from Source Database
+      env:
+        PGHOST: ${{ secrets.DB_HOSTNAME }}
+        PGPORT: ${{ secrets.DB_PORT }}
+        PGUSER: ${{ secrets.DB_USER }}
+        PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        # Get the timestamp or version number for unique backup filenames
+        TIMESTAMP=$(date +'%Y%m%d%H%M%S')
+        # Backup source data only with versioning in custom format
+        pg_dump --host=$PGHOST --port=$PGPORT --dbname=Db_Deployment_Automation --username=$PGUSER --no-password --data-only --format=custom --file=data_backup_v${TIMESTAMP}.dump
+        echo "Data backup completed successfully"
+
+    # Step 3: Commit and Push Backups to the Same Branch
+    - name: Commit and Push Backups to the Same Branch
+      run: |
+        git config --global user.name "github-actions"
+        git config --global user.email "github-actions@github.com"
+        
+        # Ensure you are on the current branch
+        git checkout ${{ github.ref_name }}
+
+        # Pull the latest changes from the remote branch to avoid non-fast-forward errors
+        git pull origin ${{ github.ref_name }}
+
+        # Add all backup files (with versioning)
+        git add schema_backup_v*.dump data_backup_v*.dump
+        
+        # Commit the changes with a timestamp
+        git commit -m "Backup schema and data on $(date)"
+        
+        # Push the changes to the same branch
+        git push origin ${{ github.ref_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Step 4: Deploy Schema to Target Database
+    - name: Deploy Schema to Target Database
+      env:
+        PGHOST: ${{ secrets.DB_HOSTNAME }}
+        PGPORT: ${{ secrets.DB_PORT }}
+        PGUSER: ${{ secrets.DB_USER }}
+        PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        # Get the latest schema backup file
+        LATEST_SCHEMA_BACKUP=$(ls -t schema_backup_v*.dump | head -n 1)
+        # Restore schema only to the target database using pg_restore
+        pg_restore --host=$PGHOST --port=$PGPORT --dbname=Target --username=$PGUSER --no-password --clean --schema-only --verbose $LATEST_SCHEMA_BACKUP
+        echo "Schema deployed to target database successfully"
+
+    # Step 5: Deploy Data to Target Database
+    - name: Deploy Data to Target Database
+      env:
+        PGHOST: ${{ secrets.DB_HOSTNAME }}
+        PGPORT: ${{ secrets.DB_PORT }}
+        PGUSER: ${{ secrets.DB_USER }}
+        PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        # Get the latest data backup file
+        LATEST_DATA_BACKUP=$(ls -t data_backup_v*.dump | head -n 1)
+        # Restore data only to the target database using pg_restore
+        pg_restore --host=$PGHOST --port=$PGPORT --dbname=Target --username=$PGUSER --no-password --data-only --verbose $LATEST_DATA_BACKUP
+        echo "Data deployed to target database successfully"

@@ -1,0 +1,61 @@
+name: Deploy Database Changes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # This adds the ability to manually trigger the workflow
+
+jobs:
+  migrate-db_deployment_automation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Flyway
+      run: |
+        curl -L -o flyway.tar.gz https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/10.17.2/flyway-commandline-10.17.2-linux-x64.tar.gz
+        mkdir -p $HOME/flyway
+        tar -xzf flyway.tar.gz -C $HOME/flyway --strip-components=1
+        echo "$HOME/flyway" >> $GITHUB_PATH
+
+    - name: Migrate Db_Deployment_Automation
+      env:
+        FLYWAY_URL: ${{ secrets.DB_URL }}
+        FLYWAY_USER: ${{ secrets.DB_USER }}
+        FLYWAY_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        flyway -url=$FLYWAY_URL -user=$FLYWAY_USER -password=$FLYWAY_PASSWORD -locations=filesystem:./sql -baselineOnMigrate=true migrate
+
+    - name: Display Current Schema Version and Description
+      env:
+        FLYWAY_URL: ${{ secrets.DB_URL }}
+        FLYWAY_USER: ${{ secrets.DB_USER }}
+        FLYWAY_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        echo "Fetching current schema version and description..."
+        psql "host=$(echo $FLYWAY_URL | cut -d/ -f3 | cut -d: -f1) port=5432 dbname=$(echo $FLYWAY_URL | cut -d/ -f4) user=$FLYWAY_USER password=$FLYWAY_PASSWORD sslmode=require" -c "SELECT version, description FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1;"
+
+  migrate-target:
+    runs-on: ubuntu-latest
+    needs: migrate-db_deployment_automation  # Ensure this runs after Db_Deployment_Automation migration
+    if: github.event_name == 'workflow_dispatch'  # This ensures it only runs on manual trigger
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Flyway
+      run: |
+        curl -L -o flyway.tar.gz https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/10.17.2/flyway-commandline-10.17.2-linux-x64.tar.gz
+        mkdir -p $HOME/flyway
+        tar -xzf flyway.tar.gz -C $HOME/flyway --strip-components=1
+        echo "$HOME/flyway" >> $GITHUB_PATH
+
+    - name: Migrate Target Database
+      env:
+        FLYWAY_URL: ${{ secrets.DB_URL }}
+        FLYWAY_USER: ${{ secrets.DB_USER }}
+        FLYWAY_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        flyway -url=$FLYWAY_URL -user=$FLYWAY_USER -password=$FLYWAY_PASSWORD -locations=filesystem:./sql -baselineOnMigrate=true migrate
