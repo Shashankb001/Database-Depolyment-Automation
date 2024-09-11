@@ -1,0 +1,49 @@
+name: Automated + Manual Workflow
+
+# Step 1: Automated Workflow
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  automated_step:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Run automated tasks
+        run: |
+          echo "Running automated task"
+          # Add your automated commands here
+
+  manual_approval:
+    runs-on: ubuntu-latest
+    needs: automated_step  # This step waits until the automated_step job is complete
+    steps:
+      - name: Wait for approval
+        run: echo "Waiting for manual approval"
+      - name: Manual Approval
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const approval = await github.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.run_id,
+              body: 'Please approve this workflow manually.'
+            })
+            console.log(approval)
+
+# Step 3: Manual Workflow (Triggered after approval)
+  manual_step:
+    runs-on: ubuntu-latest
+    needs: manual_approval
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Perform manual task
+        run: |
+          echo "Executing the manual task after approval"
+          # Add manual commands or tasks here
